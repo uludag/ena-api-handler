@@ -206,11 +206,21 @@ class EnaApiHandler:
         else:
             return {s['secondary_study_accession'] for s in json.loads(response.text)}
 
+    def get_runs(self, run_accessions, fields=None, public=True, attempt=0, search_params=None):
+        query = " OR ".join("run_accession="+j for j in run_accessions)
+        r = self.runs_query(query, fields, public, attempt, search_params)
+        return r
+
     def get_run(self, run_accession, fields=None, public=True, attempt=0, search_params=None):
+        query = 'run_accession=\"{}\"'.format(run_accession)
+        r = self.runs_query(query, fields, public, attempt, search_params)
+        return r[0]
+
+    def runs_query(self, query, fields=None, public=True, attempt=0, search_params=None):
         data = get_default_params()
         data['result'] = 'read_run'
         data['fields'] = fields or RUN_DEFAULT_FIELDS
-        data['query'] = 'run_accession=\"{}\"'.format(run_accession)
+        data['query'] = query
 
         if search_params:
             data.update(search_params)
@@ -218,47 +228,50 @@ class EnaApiHandler:
         response = self.post_request(data)
 
         if str(response.status_code)[0] != '2':
-            logging.debug('Error retrieving run {}, response code: {}'.format(run_accession, response.status_code))
+            logging.debug('Error retrieving runs {}, response code: {}'.
+                          format(query, response.status_code))
             logging.debug('Response: {}'.format(response.text))
-            raise ValueError('Could not retrieve run with accession %s.', run_accession)
+            raise ValueError('Could not retrieve run with query %s.', query)
         elif response.status_code == 204:
             if attempt < 2:
                 attempt += 1
                 sleep(1)
                 logging.warning('Error 204 when retrieving run {} in dataPortal {}, '
-                                'retrying {}'.format(run_accession,
+                                'retrying {}'.format(query,
                                                      data.get('dataPortal'),
                                                      attempt))
 
-                return self.get_run(run_accession=run_accession, fields=fields, public=public, attempt=attempt,
+                return self.runs_query(query, fields=fields, public=public, attempt=attempt,
                                     search_params=search_params)
             elif attempt == 2 and data['dataPortal'] != 'ena':
-                return self.get_run(run_accession=run_accession, fields=fields, public=public,
+                return self.get_run(query, fields=fields, public=public,
                                     search_params={'dataPortal': 'ena'})
             else:
-                raise ValueError('Could not find run {} in ENA after {} attempts'.format(run_accession, RETRY_COUNT))
+                raise ValueError('Could not find run {} in ENA after {} attempts'.
+                                 format(query, RETRY_COUNT))
         try:
-            run = json.loads(response.text)[0]
+            runs = json.loads(response.text)
         except (IndexError, TypeError, ValueError):
-            raise ValueError('Could not find run {} in ENA.'.format(run_accession))
+            raise ValueError('Could not find runs {} in ENA.'.format(query))
 
-        if fields is None or 'raw_data_size' in fields:
-            if public and 'fastq_ftp' in run and len(run['fastq_ftp']):
-                run['raw_data_size'] = self.get_run_raw_size(run)
-            elif public and 'submitted_ftp' in run and len(run['submitted_ftp']) > 0:
-                run['raw_data_size'] = self.get_run_raw_size(run, 'submitted_ftp')
-            else:
-                run['raw_data_size'] = None
+        for run in runs:
+            if fields is None or 'raw_data_size' in fields:
+                if public and 'fastq_ftp' in run and len(run['fastq_ftp']):
+                    run['raw_data_size'] = self.get_run_raw_size(run)
+                elif public and 'submitted_ftp' in run and len(run['submitted_ftp']) > 0:
+                    run['raw_data_size'] = self.get_run_raw_size(run, 'submitted_ftp')
+                else:
+                    run['raw_data_size'] = None
 
-        for int_param in ('read_count', 'base_count'):
-            if int_param in run:
-                try:
-                    run[int_param] = int(run[int_param])
-                except ValueError as e:
-                    if not public:
-                        raise e
-                    run[int_param] = -1
-        return run
+            for int_param in ('read_count', 'base_count'):
+                if int_param in run:
+                    try:
+                        run[int_param] = int(run[int_param])
+                    except ValueError as e:
+                        if not public:
+                            raise e
+                        run[int_param] = -1
+        return runs
 
     def get_study_runs(self, study_acc, fields=None, filter_assembly_runs=True, filter_accessions=None,
                        search_params=None):
