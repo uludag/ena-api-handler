@@ -436,14 +436,25 @@ class EnaApiHandler:
         filter_accessions=None,
         search_params=None,
     ):
+        query = '(study_accession="{}" OR secondary_study_accession="{}")'.format(
+            study_acc, study_acc)
+        r = self.get_runs(query, fields, filter_assembly_runs, filter_accessions,
+                          search_params)
+        return r
+
+    def get_runs(
+        self,
+        query,
+        fields=None,
+        filter_assembly_runs=True,
+        filter_accessions=None,
+        search_params=None,
+    ):
+
         data = get_default_params()
         data["result"] = "read_run"
         data["fields"] = fields or RUN_DEFAULT_FIELDS
-        data[
-            "query"
-        ] = '(study_accession="{}" OR secondary_study_accession="{}")'.format(
-            study_acc, study_acc
-        )
+        data["query"] = query
 
         if search_params:
             data.update(search_params)
@@ -453,12 +464,12 @@ class EnaApiHandler:
         response = self.post_request(data)
         if str(response.status_code)[0] != "2":
             logging.debug(
-                "Error retrieving study runs {}, response code: {}".format(
-                    study_acc, response.status_code
+                "Error retrieving runs {}, response code: {}".format(
+                    query, response.status_code
                 )
             )
             logging.debug("Response: {}".format(response.text))
-            raise ValueError("Could not retrieve runs for study %s.", study_acc)
+            raise ValueError("Could not retrieve runs for query %s.", query)
         elif response.status_code == 204:
             return []
         runs = json.loads(response.text)
